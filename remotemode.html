@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>chiaki-ng · Cómo funciona el modo remoto</title>
+<style>
+  :root {
+    --ink: #1d2330; --muted: #5b6475; --line: #d9dee8; --bg: #f7f8fb; --card: #ffffff;
+    --sony: #2f5fd0; --sony-bg: #e8eefc; --direct: #0f8a5f; --direct-bg: #e3f5ee;
+    --third: #a8661a; --third-bg: #fbf0e1; --warn: #b3261e; --warn-bg: #fdeceb;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); }
+  main { max-width: 960px; margin: 0 auto; padding: 40px 24px 64px; }
+  h1 { font-size: 30px; margin: 0 0 4px; }
+  h2 { font-size: 21px; margin: 40px 0 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .answer { background: var(--card); border: 1px solid var(--line); border-left: 6px solid var(--direct); border-radius: 10px; padding: 18px 22px; }
+  .answer p { margin: 6px 0; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .box { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+  .box h3 { margin: 0 0 6px; font-size: 16px; }
+  .sony { border-top: 4px solid var(--sony); } .direct { border-top: 4px solid var(--direct); } .third { border-top: 4px solid var(--third); }
+  .box ul { margin: 6px 0 0; padding-left: 18px; }
+  svg { width: 100%; height: auto; background: #fff; border: 1px solid var(--line); border-radius: 10px; }
+  ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; }
+  ol.steps li { counter-increment: s; position: relative; padding: 10px 14px 10px 52px; margin-bottom: 8px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+  ol.steps li::before { content: counter(s); position: absolute; left: 14px; top: 10px; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 14px; color: #fff; background: var(--sony); }
+  ol.steps li.d::before { background: var(--direct); }
+  ol.steps li.t::before { background: var(--third); }
+  .tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; margin-left: 6px; vertical-align: 1px; }
+  .tag.s { background: var(--sony-bg); color: var(--sony); } .tag.d { background: var(--direct-bg); color: var(--direct); } .tag.t { background: var(--third-bg); color: var(--third); }
+  code { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; background: #eef1f6; padding: 1px 5px; border-radius: 4px; }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: 15px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: #eef1f6; font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  .warn { background: var(--warn-bg); border: 1px solid #f3c7c3; border-radius: 10px; padding: 14px 18px; }
+  .warn strong { color: var(--warn); }
+  footer { margin-top: 40px; color: var(--muted); font-size: 14px; }
+  .reco { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; }
+  .reco h3 { margin: 0 0 6px; font-size: 17px; }
+  .reco.best { border: 2px solid var(--direct); }
+  .reco p, .reco ul, .reco ol { margin: 6px 0; }
+  .reco ul, .reco ol { padding-left: 20px; }
+  pre { background: #1d2330; color: #e8ecf3; padding: 10px 14px; border-radius: 8px; overflow-x: auto; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .lvl { font-weight: 600; } .lvl.hi { color: var(--direct); } .lvl.mid { color: var(--third); } .lvl.lo { color: var(--warn); }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Cómo funciona el modo remoto de chiaki-ng</h1>
+<p class="sub">Qué pasa por Sony, qué va directo y por qué. Basado en <code>lib/src/remote/holepunch.c</code>, <code>lib/src/remote/rudp.c</code> y <code>lib/src/session.c</code>.</p>
+
+<div class="answer">
+  <p><strong>Respuesta corta:</strong> el video, el audio y los controles <strong>no pasan por Sony</strong>. Viajan en una conexión <strong>UDP directa</strong> entre el PS5 y chiaki-ng, abierta a través de los dos NAT con una técnica llamada <em>UDP hole punching</em>.</p>
+  <p>Sony solo hace de <strong>punto de encuentro</strong> durante unos segundos. Por sus servidores pasan la autenticación y el intercambio de direcciones IP y puertos ("candidatos") para que cada lado sepa a dónde disparar paquetes. Después Sony queda fuera del camino de los datos.</p>
+  <p>No hay relé: si el agujero no se logra abrir, la conexión falla. chiaki-ng no tiene ningún servidor intermedio de respaldo.</p>
+</div>
+
+<h2>La arquitectura en una imagen</h2>
+
+<svg viewBox="0 0 920 430" role="img" aria-label="Diagrama: fase de señalización por Sony y fase de datos directa por UDP">
+  <defs>
+    <marker id="aS" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f5fd0"/></marker>
+    <marker id="aD" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f8a5f"/></marker>
+    <marker id="aT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#a8661a"/></marker>
+  </defs>
+
+  <!-- Sony -->
+  <rect x="300" y="18" width="320" height="104" rx="12" fill="#e8eefc" stroke="#2f5fd0" stroke-width="1.5"/>
+  <text x="460" y="44" text-anchor="middle" font-size="16" font-weight="700" fill="#1d2330">Servidores de PSN (Sony)</text>
+  <text x="460" y="66" text-anchor="middle" font-size="12.5" fill="#33405a">auth.api.sonyentertainmentnetwork.com · OAuth</text>
+  <text x="460" y="84" text-anchor="middle" font-size="12.5" fill="#33405a">web.np.playstation.com · sessionManager (HTTPS)</text>
+  <text x="460" y="102" text-anchor="middle" font-size="12.5" fill="#33405a">*.np.communication.playstation.net · push (WSS)</text>
+
+  <!-- STUN -->
+  <rect x="690" y="30" width="210" height="80" rx="12" fill="#fbf0e1" stroke="#a8661a" stroke-width="1.5"/>
+  <text x="795" y="58" text-anchor="middle" font-size="15" font-weight="700" fill="#1d2330">Servidores STUN</text>
+  <text x="795" y="78" text-anchor="middle" font-size="12.5" fill="#5b4214">públicos, de terceros</text>
+  <text x="795" y="96" text-anchor="middle" font-size="12.5" fill="#5b4214">"¿cuál es mi IP pública?"</text>
+
+  <!-- Home -->
+  <rect x="20" y="215" width="250" height="200" rx="14" fill="#fafbfd" stroke="#9aa3b5" stroke-dasharray="6 5"/>
+  <text x="145" y="403" text-anchor="middle" font-size="13" fill="#5b6475">Casa</text>
+  <rect x="50" y="232" width="190" height="66" rx="10" fill="#ffffff" stroke="#1d2330" stroke-width="1.5"/>
+  <text x="145" y="262" text-anchor="middle" font-size="16" font-weight="700">PS5</text>
+  <text x="145" y="282" text-anchor="middle" font-size="12.5" fill="#5b6475">conectado siempre a PSN</text>
+  <rect x="50" y="318" width="190" height="56" rx="10" fill="#ffffff" stroke="#9aa3b5"/>
+  <text x="145" y="343" text-anchor="middle" font-size="14" font-weight="600">Router / NAT</text>
+  <text x="145" y="362" text-anchor="middle" font-size="12" fill="#5b6475">UPnP opcional</text>
+
+  <!-- Away -->
+  <rect x="650" y="215" width="250" height="200" rx="14" fill="#fafbfd" stroke="#9aa3b5" stroke-dasharray="6 5"/>
+  <text x="775" y="403" text-anchor="middle" font-size="13" fill="#5b6475">Fuera de casa</text>
+  <rect x="680" y="232" width="190" height="66" rx="10" fill="#ffffff" stroke="#1d2330" stroke-width="1.5"/>
+  <text x="775" y="262" text-anchor="middle" font-size="16" font-weight="700">chiaki-ng</text>
+  <text x="775" y="282" text-anchor="middle" font-size="12.5" fill="#5b6475">PC, Steam Deck, Android…</text>
+  <rect x="680" y="318" width="190" height="56" rx="10" fill="#ffffff" stroke="#9aa3b5"/>
+  <text x="775" y="343" text-anchor="middle" font-size="14" font-weight="600">Router / NAT</text>
+  <text x="775" y="362" text-anchor="middle" font-size="12" fill="#5b6475">UPnP opcional</text>
+
+  <!-- signaling -->
+  <path d="M175,232 C200,170 260,120 300,92" fill="none" stroke="#2f5fd0" stroke-width="2" stroke-dasharray="7 5" marker-start="url(#aS)" marker-end="url(#aS)"/>
+  <path d="M745,232 C720,170 660,120 620,92" fill="none" stroke="#2f5fd0" stroke-width="2" stroke-dasharray="7 5" marker-start="url(#aS)" marker-end="url(#aS)"/>
+  <text x="90" y="170" font-size="12.5" fill="#2f5fd0" font-weight="600">1 · señalización</text>
+  <text x="830" y="170" text-anchor="end" font-size="12.5" fill="#2f5fd0" font-weight="600">1 · señalización</text>
+
+  <!-- stun -->
+  <path d="M820,232 L810,112" fill="none" stroke="#a8661a" stroke-width="1.8" stroke-dasharray="3 4" marker-end="url(#aT)"/>
+
+  <!-- direct -->
+  <path d="M240,262 L680,262" fill="none" stroke="#0f8a5f" stroke-width="4" marker-start="url(#aD)" marker-end="url(#aD)"/>
+  <text x="460" y="250" text-anchor="middle" font-size="13.5" font-weight="700" fill="#0f8a5f">2 · agujero CTRL · RUDP sobre UDP</text>
+  <path d="M240,290 L680,290" fill="none" stroke="#0f8a5f" stroke-width="4" marker-start="url(#aD)" marker-end="url(#aD)"/>
+  <text x="460" y="314" text-anchor="middle" font-size="13.5" font-weight="700" fill="#0f8a5f">3 · agujero DATA · Takion: video, audio y controles</text>
+  <text x="460" y="344" text-anchor="middle" font-size="12.5" fill="#33405a">directo PS5 ⇄ cliente, cifrado de extremo a extremo</text>
+  <text x="460" y="362" text-anchor="middle" font-size="12.5" fill="#33405a">Sony no ve ni retransmite estos paquetes</text>
+</svg>
+
+<div class="grid" style="margin-top:16px">
+  <div class="box sony">
+    <h3>Lo que pasa por Sony <span class="tag s">HTTPS / WSS</span></h3>
+    <ul>
+      <li>Tu login y el token OAuth.</li>
+      <li>La lista de tus consolas.</li>
+      <li>La orden de "inicia Remote Play" para el PS5.</li>
+      <li>Las ofertas con IPs y puertos (candidatos) de cada lado, y sus confirmaciones.</li>
+      <li>Un dato de sesión de 16 bytes (<code>customData1</code>) que se usa para registrar la consola en remoto.</li>
+    </ul>
+  </div>
+  <div class="box direct">
+    <h3>Lo que va directo <span class="tag d">UDP</span></h3>
+    <ul>
+      <li>El control de la sesión: handshake, login PIN, teclado. En LAN esto iría por TCP 9295; en remoto va por <strong>RUDP</strong> (UDP fiable de Sony).</li>
+      <li>El stream completo por <strong>Takion</strong>: video, audio, controles, vibración, micrófono.</li>
+      <li>Todo cifrado entre el PS5 y el cliente.</li>
+    </ul>
+  </div>
+</div>
+
+<h2>Paso a paso</h2>
+<ol class="steps">
+  <li><strong>Login en Sony</strong> <span class="tag s">Sony</span><br>Inicias sesión en la página de Sony y pegas la URL de redirección. chiaki-ng canjea el código por un token OAuth y lo refresca solo después (<code>gui/src/psntoken.cpp</code>).</li>
+  <li><strong>Lista de consolas</strong> <span class="tag s">Sony</span><br><code>chiaki_holepunch_list_devices</code> le pregunta a <code>web.np.playstation.com</code> qué PS5 tiene tu cuenta y en qué estado están.</li>
+  <li><strong>Canal de avisos</strong> <span class="tag s">Sony</span><br><code>chiaki_holepunch_session_init</code> pide la dirección del servidor de push y abre un WebSocket (<code>wss://…/np/pushNotification</code>). Por ahí llegarán los mensajes del PS5. Nadie se conecta todavía al otro.</li>
+  <li><strong>Preparar la salida</strong> <span class="tag t">tu red</span><br><code>chiaki_holepunch_upnp_discover</code> busca el router. Si tiene UPnP, chiaki-ng le pide abrir un puerto UDP y averigua así su IP pública.</li>
+  <li><strong>Crear la sesión y despertar a la consola</strong> <span class="tag s">Sony</span><br><code>chiaki_holepunch_session_create</code> crea una "remotePlaySession" en el sessionManager de Sony. Luego <code>chiaki_holepunch_session_start</code> manda un comando al PS5 por PSN. El PS5, que siempre mantiene su propia conexión con PSN, responde por el WebSocket con <code>customData1</code>.</li>
+  <li><strong>Intercambio de candidatos (CTRL)</strong> <span class="tag s">Sony</span><br>El PS5 envía su OFFER con sus direcciones posibles. chiaki-ng arma las suyas y envía su OFFER. Ambos los confirman con ACK. Todo pasa como mensajes de sesión de Sony.</li>
+  <li class="d"><strong>Perforar el NAT (CTRL)</strong> <span class="tag d">directo</span><br><code>check_candidates</code> dispara paquetes UDP a cada dirección del PS5 mientras el PS5 hace lo mismo hacia chiaki-ng. Esos paquetes salientes abren la "puerta" en cada NAT. La primera pareja que responde gana, y se intercambia ACCEPT por Sony.</li>
+  <li class="d"><strong>Sesión de control por RUDP</strong> <span class="tag d">directo</span><br>Sobre ese socket, <code>session.c</code> crea <code>chiaki_rudp_init</code>, y el control de sesión que en LAN usaría TCP corre por RUDP.</li>
+  <li class="d"><strong>Segundo agujero (DATA) y stream</strong> <span class="tag d">directo</span><br>Se repite el intercambio y la perforación para el puerto de datos (<code>CHIAKI_HOLEPUNCH_PORT_TYPE_DATA</code>). Takion arranca sobre ese socket, y desde aquí todo el juego viaja directo.</li>
+</ol>
+
+<h2>Los candidatos: cómo cada lado adivina a dónde disparar</h2>
+<table>
+  <tr><th>Tipo (<code>holepunch.c</code>)</th><th>Qué es</th><th>De dónde sale</th></tr>
+  <tr><td><code>LOCAL</code></td><td>La IP privada del equipo (192.168.x.x)</td><td>La interfaz de red. Sirve si por casualidad están en la misma LAN.</td></tr>
+  <tr><td><code>STATIC</code></td><td>La IP pública del router, con un puerto ya abierto</td><td>UPnP: el router informa su IP externa y mapea el puerto.</td></tr>
+  <tr><td><code>STUN</code></td><td>La IP y el puerto públicos que ve "afuera"</td><td>Servidores STUN públicos de terceros. La lista se descarga del repositorio <code>pradt2/always-online-stun</code> en GitHub. No son de Sony y solo ven tu IP pública.</td></tr>
+  <tr><td><code>DERIVED</code></td><td>Una dirección que no se anunció pero de la que llegó respuesta</td><td>Se aprende al recibir paquetes del PS5 desde un puerto distinto, típico de NAT que cambian el puerto.</td></tr>
+</table>
+<p>Si un NAT asigna puertos al azar (NAT simétrico), chiaki-ng prueba <strong>adivinar puertos</strong> (hasta 75 intentos por defecto, <code>RANDOM_ALLOCATION_GUESSES_NUMBER</code>), con varios sockets en paralelo.</p>
+
+<h2>Cuándo no funciona</h2>
+<div class="warn">
+  <p><strong>Sin relé no hay plan B automático.</strong> Si los dos lados están detrás de NAT difíciles (simétricos, o CGNAT del proveedor de internet), ningún candidato responde y la conexión falla con "likely unsupported network type".</p>
+  <p>Las alternativas que documenta el proyecto (<code>docs/setup/remoteconnection.md</code>) son:</p>
+  <ul>
+    <li><strong>Conexión manual con reenvío de puertos</strong> en el router de casa. Ahí ni siquiera se usa Sony: el cliente apunta a tu IP pública como si fuera la LAN.</li>
+    <li><strong>VPN</strong> hacia la red de casa. El cliente queda "dentro" de la LAN.</li>
+  </ul>
+  <p>Además, el modo remoto vía PSN es <strong>solo IPv4</strong>, porque así lo soporta el PS5.</p>
+</div>
+
+<h2>Y en la versión web</h2>
+<p>En la versión web planeada (<code>web/specs/</code>), todo esto lo hace el <strong>puente C++</strong>, que reutiliza este mismo código. El tramo entre el navegador y el puente es otra conexión aparte, por WebRTC, con TURN opcional si el navegador está lejos (<code>web/specs/v0.2.0/technical/TS-09-holepunch-y-turn.md</code>). Sony sigue sin ver el stream.</p>
+
+<h2>Propuestas de mejora de establecimiento de conexión</h2>
+
+<h3>Diagnóstico de tu caso: el problema es arrancar, no el stream</h3>
+<svg viewBox="0 0 920 250" role="img" aria-label="PS5 detrás del NAT de Movistar y chiaki-ng detrás del NAT del trabajo o CGNAT móvil">
+  <text x="245" y="18" text-anchor="middle" font-size="13" fill="#5b6475">Casa</text>
+  <rect x="15" y="30" width="110" height="56" rx="10" fill="#fff" stroke="#1d2330" stroke-width="1.5"/><text x="70" y="63" text-anchor="middle" font-size="15" font-weight="700">PS5</text>
+  <rect x="155" y="30" width="180" height="56" rx="10" fill="#fbf0e1" stroke="#a8661a" stroke-width="1.5"/><text x="245" y="55" text-anchor="middle" font-size="14" font-weight="700">Router Movistar</text><text x="245" y="74" text-anchor="middle" font-size="12" fill="#5b6475">NAT de casa · UPnP del PS5</text>
+  <rect x="160" y="120" width="170" height="44" rx="10" fill="#fff" stroke="#9aa3b5"/><text x="245" y="147" text-anchor="middle" font-size="13" font-weight="600">TP-Link Archer</text>
+  <rect x="160" y="184" width="170" height="44" rx="10" fill="#fff" stroke="#9aa3b5"/><text x="245" y="211" text-anchor="middle" font-size="13">móviles</text>
+  <path d="M245,86 L245,120 M245,164 L245,184" stroke="#9aa3b5" stroke-width="2"/>
+  <rect x="380" y="30" width="110" height="56" rx="10" fill="#f7f8fb" stroke="#9aa3b5"/><text x="435" y="63" text-anchor="middle" font-size="14" font-weight="600">Internet</text>
+  <rect x="535" y="30" width="200" height="56" rx="10" fill="#fdeceb" stroke="#b3261e" stroke-width="1.5"/><text x="635" y="55" text-anchor="middle" font-size="14" font-weight="700">NAT trabajo / CGNAT móvil</text><text x="635" y="74" text-anchor="middle" font-size="12" fill="#5b6475">sin UPnP · cambia puertos</text>
+  <rect x="780" y="30" width="125" height="56" rx="10" fill="#fff" stroke="#1d2330" stroke-width="1.5"/><text x="842" y="63" text-anchor="middle" font-size="14" font-weight="700">chiaki-ng</text>
+  <path d="M125,58 L155,58 M335,58 L380,58 M490,58 L535,58 M735,58 L780,58" stroke="#9aa3b5" stroke-width="2"/>
+  <text x="625" y="125" text-anchor="middle" font-size="13" fill="#1d2330">El PS5 está detrás de un solo NAT (Movistar). Si ese router tiene UPnP,</text>
+  <text x="625" y="144" text-anchor="middle" font-size="13" fill="#1d2330">la consola publica un candidato usable. El eslabón débil es el lado del cliente:</text>
+  <text x="625" y="163" text-anchor="middle" font-size="13" fill="#1d2330">sin UPnP y con puertos que cambian (NAT simétrico o CGNAT), chiaki-ng</text>
+  <text x="625" y="182" text-anchor="middle" font-size="13" fill="#1d2330">tiene que adivinar puertos, dentro de 30 s por fase</text>
+  <text x="625" y="201" text-anchor="middle" font-size="13" fill="#1d2330">(<tspan font-family="monospace">SESSION_START_TIMEOUT_SEC</tspan>). Cuando el agujero se abre, el stream va bien.</text>
+</svg>
+
+<h3 style="margin-top:22px">Opciones, de la más recomendada a la menos</h3>
+<table>
+  <tr><th>Propuesta</th><th>Esfuerzo</th><th>Fiabilidad al arrancar</th><th>¿Depende de Sony y del hole punching?</th></tr>
+  <tr><td>1 · Túnel Tailscale con un dispositivo pequeño en casa como subnet router</td><td>Bajo (ya usas Tailscale) + un dispositivo</td><td class="lvl hi">Muy alta</td><td>No</td></tr>
+  <tr><td>2 · Optimizar el NAT de casa del PS5</td><td>Bajo</td><td class="lvl mid">Mejora, no garantiza</td><td>Sí</td></tr>
+  <tr><td>3 · Reenvío manual de puertos</td><td>Medio</td><td class="lvl mid">Alta si no hay CGNAT en casa</td><td>No</td></tr>
+  <tr><td>4 · Mejoras en el código de chiaki-ng</td><td>Contribución</td><td class="lvl lo">Ayuda a diagnosticar</td><td>Sí</td></tr>
+</table>
+
+<div class="reco best" style="margin-top:16px">
+  <h3>1 · Recomendada: túnel privado con Tailscale (subnet router)</h3>
+  <p>Es el "canal privado" que buscas, y ya lo conoces por Moonlight. El PS5 no puede instalar Tailscale, pero <strong>un dispositivo pequeño encendido en casa sí</strong> (por ejemplo, una Raspberry Pi), y puede publicar la red local completa dentro de tu tailnet. Desde el trabajo, chiaki-ng ve al PS5 por su IP local (por ejemplo, <code>192.168.1.50</code>) <strong>como si estuvieras en casa</strong>. Se conecta igual que en LAN: TCP 9295 y UDP 9296/9297, sin PSN y sin hole punching de Sony.</p>
+  <svg viewBox="0 0 920 150" role="img" aria-label="chiaki-ng por Tailscale hasta un dispositivo en casa y de ahí al PS5 en la LAN">
+    <rect x="20" y="45" width="150" height="56" rx="10" fill="#fff" stroke="#1d2330" stroke-width="1.5"/><text x="95" y="72" text-anchor="middle" font-size="14" font-weight="700">chiaki-ng</text><text x="95" y="90" text-anchor="middle" font-size="11.5" fill="#5b6475">trabajo · Tailscale ON</text>
+    <path d="M170,73 L520,73" stroke="#0f8a5f" stroke-width="5"/>
+    <text x="345" y="60" text-anchor="middle" font-size="13" font-weight="700" fill="#0f8a5f">túnel WireGuard de Tailscale</text>
+    <text x="345" y="98" text-anchor="middle" font-size="12" fill="#33405a">directo cuando se puede · relé DERP si no</text>
+    <rect x="520" y="45" width="170" height="56" rx="10" fill="#e3f5ee" stroke="#0f8a5f" stroke-width="1.5"/><text x="605" y="70" text-anchor="middle" font-size="14" font-weight="700">Dispositivo en casa</text><text x="605" y="88" text-anchor="middle" font-size="11.5" fill="#33405a">ej. Raspberry Pi</text>
+    <path d="M690,73 L760,73" stroke="#9aa3b5" stroke-width="3"/>
+    <text x="725" y="120" text-anchor="middle" font-size="11" fill="#5b6475">LAN Movistar</text>
+    <rect x="760" y="45" width="140" height="56" rx="10" fill="#fff" stroke="#1d2330" stroke-width="1.5"/><text x="830" y="78" text-anchor="middle" font-size="15" font-weight="700">PS5</text>
+  </svg>
+  <p><strong>Por qué arranca siempre:</strong> Tailscale hace su propio NAT traversal, mucho más robusto. Si no logra la conexión directa, cae a sus servidores relé DERP, así que la conexión no falla (en el peor caso, con más latencia). Es justo el plan B que le falta al modo PSN.</p>
+
+  <h3 style="margin-top:18px">¿Qué dispositivo necesito en casa?</h3>
+  <p>El subnet router <strong>tiene que estar dentro de la red de tu casa</strong>, porque es quien llega a la IP local del PS5. Un server que esté en otra red, como el del trabajo, no sirve para este papel: desde ahí la IP <code>192.168.1.x</code> del PS5 no existe. Opciones, de la más simple a la menos:</p>
+  <table>
+    <tr><th>Dispositivo</th><th>Costo aprox.</th><th>Comentario</th></tr>
+    <tr><td><strong>Raspberry Pi</strong> (Zero 2 W, 4 o 5), por cable al Movistar</td><td>Bajo</td><td>La opción típica: Linux, Tailscale oficial, consumo mínimo. La Zero 2 W necesita un adaptador Ethernet o va por Wi-Fi, con algo menos de estabilidad.</td></tr>
+    <tr><td>Un <strong>PC o portátil viejo</strong> que quede encendido</td><td>Ninguno</td><td>Linux, Windows o macOS, todos con Tailscale como subnet router. Consume más.</td></tr>
+    <tr><td><strong>Router con Tailscale integrado</strong> (por ejemplo, GL.iNet, o uno con OpenWrt) en lugar del TP-Link</td><td>Medio</td><td>No agrega un aparato: el propio router es el subnet router. Si lo usas, conecta el PS5 a ese router.</td></tr>
+    <tr><td>Apple TV o un dispositivo Android ya encendido en casa</td><td>Ninguno</td><td>Tailscale tiene app para ellos. Hay que verificar en la documentación de Tailscale si esa versión permite anunciar rutas de subred.</td></tr>
+  </table>
+  <p style="margin-top:10px">El server del trabajo no hace falta para esto. Tu portátil o tu celular en el trabajo solo necesitan la app de Tailscale. Si la red del trabajo bloquea UDP, Tailscale pasa por sus relés DERP sobre HTTPS (puerto 443), así que funciona igual, con algo más de latencia.</p>
+  <p><strong>Pasos:</strong></p>
+  <ol>
+    <li>En el <strong>router Movistar</strong>, reserva una IP fija (reserva DHCP) para el PS5.</li>
+    <li>En el dispositivo de casa (Linux, por ejemplo Raspberry Pi OS):
+<pre>echo 'net.ipv4.ip_forward = 1' | sudo tee /etc/sysctl.d/99-tailscale.conf && sudo sysctl -p /etc/sysctl.d/99-tailscale.conf
+sudo tailscale up --advertise-routes=192.168.1.0/24   # la subred del router Movistar, donde está el PS5</pre>
+    <p>Conéctalo por cable al <strong>router Movistar</strong>, donde está el PS5. Si va detrás del TP-Link también funciona: sus paquetes salen por el NAT del TP-Link hacia la LAN del Movistar y las respuestas vuelven por el mismo camino. En ese caso, las dos redes deben usar rangos distintos.</p></li>
+    <li>En la consola de administración de Tailscale, aprueba la ruta anunciada por el dispositivo (Edit route settings).</li>
+    <li>En los clientes: macOS, iOS y Android aceptan rutas desde la app. En Linux, <code>sudo tailscale up --accept-routes</code>.</li>
+    <li>En chiaki-ng, agrega la consola como <strong>host manual</strong> con la IP fija del PS5. El descubrimiento por broadcast no cruza el túnel, pero las consultas a una IP concreta sí. Esa misma IP sirve para despertar la consola.</li>
+    <li>Registra la consola una vez con el PIN sobre ese host manual. Se puede hacer por el túnel si alguien en casa te dicta el PIN.</li>
+  </ol>
+  <p><strong>A tener en cuenta:</strong></p>
+  <ul>
+    <li>Comprueba con <code>tailscale ping &lt;dispositivo-de-casa&gt;</code> que la ruta sea directa y no por DERP: por DERP funciona, pero con más latencia.</li>
+    <li>El túnel tiene una MTU menor (1280). chiaki-ng la mide al iniciar con Senkusha (<code>chiaki_senkusha_run</code> en <code>session.c</code>), así que se adapta sola.</li>
+    <li>El dispositivo de casa debe estar siempre encendido. Una Raspberry Pi consume unos pocos vatios.</li>
+  </ul>
+</div>
+
+<div class="reco">
+  <h3>2 · Optimizar el NAT de casa del PS5 (mejora el modo PSN)</h3>
+  <ul>
+    <li><strong>Activa UPnP en el router Movistar.</strong> El PS5 lo usa para abrir sus propios puertos.</li>
+    <li><strong>Revisa el tipo de NAT en el PS5:</strong> Ajustes → Red → Estado de la conexión → Probar conexión a Internet. El tipo 2 es lo normal y sirve; el tipo 3 hace casi imposible el hole punching.</li>
+    <li><strong>Descarta CGNAT de Movistar:</strong> compara la IP WAN del router con la que muestra un sitio como "cuál es mi IP". Si son distintas, el PS5 está detrás de dos NAT y conviene pedirle a Movistar una IP pública.</li>
+    <li>Si sigue en tipo 3, una <strong>DMZ en el Movistar hacia la IP fija del PS5</strong> lo deja en tipo 2, a costa de exponerlo más.</li>
+  </ul>
+  <p>En el lado del cliente: en chiaki-ng → Ajustes, activa <strong>"Force STUN port guessing"</strong> y sube el número de intentos y de sockets (<code>portGuessingEnabled</code>, <code>portGuessCount</code> y <code>portGuessSocketCount</code> en <code>gui/src/qmlsettings.cpp</code>). Aun así, el NAT del trabajo o de la red móvil sigue fuera de tu control. Por eso esta opción mejora la tasa de éxito, pero no la garantiza.</p>
+</div>
+
+<div class="reco">
+  <h3>3 · Reenvío manual de puertos (conexión manual por IP pública)</h3>
+  <p>Abre <strong>9295 TCP/UDP</strong> y <strong>9296, 9297 y 9302 UDP</strong> hacia el PS5. Como el PS5 está en el router Movistar, basta con hacerlo ahí, apuntando a su IP fija. Luego, en chiaki-ng, se agrega un host manual con tu IP pública o un DNS dinámico (<code>docs/setup/remoteconnection.md</code>, "Manual Remote Connection").</p>
+  <p>Requisito: que Movistar te dé una IP pública real. Compara la IP WAN que muestra el router con la de un sitio como "cuál es mi IP". Si no coinciden, estás en CGNAT y esta opción no funciona. Además, deja puertos del PS5 expuestos a internet. Por eso Tailscale es preferible.</p>
+</div>
+
+<div class="reco">
+  <h3>4 · Mejoras propuestas en el código de chiaki-ng (para contribuir)</h3>
+  <ul>
+    <li><strong>Detectar el doble NAT y el CGNAT antes de intentar.</strong> <code>get_client_addr_remote_upnp</code> ya obtiene la IP externa que ve el router. Si es privada (<code>10/8</code>, <code>172.16/12</code>, <code>192.168/16</code>) o CGNAT (<code>100.64/10</code>), habría que avisar: "Tu router está detrás de otro NAT; UPnP no basta".</li>
+    <li><strong>Mostrar el tipo de NAT.</strong> <code>stun_port_allocation_test</code> ya calcula si la asignación de puertos es aleatoria o incremental. Hoy solo queda en el log; mostrarlo en la UI explicaría por qué no arranca.</li>
+    <li><strong>Reintento escalonado automático.</strong> Si la fase CTRL falla, reintentar con <code>chiaki_holepunch_session_force_port_guessing</code> y más sockets, sin que el usuario tenga que cambiar los ajustes.</li>
+    <li><strong>Documentar la opción Tailscale/VPN</strong> en <code>docs/setup/remoteconnection.md</code>, que hoy solo menciona una VPN de forma genérica.</li>
+  </ul>
+  <p>Lo que no se puede arreglar desde el cliente es la falta de relé. El protocolo de Sony no ofrece uno para terceros, y por eso la solución robusta es un túnel propio.</p>
+</div>
+
+<div class="reco">
+  <h3>Y la versión web planeada lo resuelve por diseño</h3>
+  <p>El puente C++ de <code>web/specs/</code> vive en un equipo de tu casa (puede ser el mismo dispositivo), así que siempre habla con el PS5 <strong>por LAN</strong> y no necesita hole punching de Sony. Tu navegador llega al puente por Tailscale (la opción 1) o por WebRTC con TURN (<code>TS-09</code>). Es el mismo principio de la propuesta 1, sin instalar nada en el dispositivo cliente aparte de Tailscale o un navegador.</p>
+</div>
+
+<footer>chiaki-ng · documento explicativo generado a partir del código fuente del repositorio.</footer>
+</main>
+</body>
+</html>
